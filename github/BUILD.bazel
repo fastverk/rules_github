@@ -7,6 +7,9 @@ exports_files(["repositories.bzl"])
 bzl_library(
     name = "repositories_bzl",
     srcs = ["repositories.bzl"],
-    visibility = ["//docs:__pkg__"],
+    # Public: downstream rules_* repos (rules_bun, rules_mdbook, …) declare
+    # this as a stardoc bzl_library dep when their own extensions.bzl loads
+    # github_binary_repository.
+    visibility = ["//visibility:public"],
     deps = ["//github/private:platforms_bzl"],
 )
