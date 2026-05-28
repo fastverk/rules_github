@@ -147,7 +147,17 @@ github_binary_repository = repository_rule(
 # -----------------------------------------------------------------------------
 
 def _github_source_repo_impl(rctx):
+    if rctx.attr.commit and rctx.attr.version:
+        fail("rules_github: github_source_repository {name}: set exactly one of `commit` or `version`.".format(
+            name = rctx.name,
+        ))
+    if not rctx.attr.commit and not rctx.attr.version:
+        fail("rules_github: github_source_repository {name}: one of `commit` (untagged ref) or `version` (release tag) is required.".format(
+            name = rctx.name,
+        ))
+
     sha = rctx.attr.sha256
+    ref = rctx.attr.commit if rctx.attr.commit else rctx.attr.version
     if not sha and not rctx.attr.allow_unverified:
         fail("rules_github: github_source_repository {name}: sha256 required (or set allow_unverified = True)".format(
             name = rctx.name,
@@ -156,22 +166,32 @@ def _github_source_repo_impl(rctx):
         # buildifier: disable=print
         print("rules_github: WARNING — downloading {name}@{v} unverified".format(
             name = rctx.name,
-            v = rctx.attr.version,
+            v = ref,
         ))
 
-    tag = rctx.attr.tag_format.format(version = rctx.attr.version)
+    repo_basename = rctx.attr.repo.split("/")[-1]
+
+    if rctx.attr.commit:
+        # Untagged ref: GitHub serves `archive/<sha>.tar.gz`, stripping
+        # into `<repo-basename>-<full-sha>/`. Used for research repos
+        # without release tags (e.g. HowieHwong/MetaTool).
+        url = "https://github.com/{repo}/archive/{commit}.tar.gz".format(
+            repo = rctx.attr.repo,
+            commit = rctx.attr.commit,
+        )
+        default_strip = "{name}-{commit}".format(name = repo_basename, commit = rctx.attr.commit)
+    else:
+        tag = rctx.attr.tag_format.format(version = rctx.attr.version)
+        url = "https://github.com/{repo}/archive/refs/tags/{tag}.tar.gz".format(
+            repo = rctx.attr.repo,
+            tag = tag,
+        )
+        default_strip = "{name}-{version}".format(name = repo_basename, version = rctx.attr.version)
 
     if rctx.attr.strip_prefix_template:
-        strip = rctx.attr.strip_prefix_template.format(version = rctx.attr.version)
+        strip = rctx.attr.strip_prefix_template.format(version = rctx.attr.version, commit = rctx.attr.commit)
     else:
-        # Default: GitHub auto-tarballs strip into `<repo-basename>-<version>/`.
-        repo_basename = rctx.attr.repo.split("/")[-1]
-        strip = "{name}-{version}".format(name = repo_basename, version = rctx.attr.version)
-
-    url = "https://github.com/{repo}/archive/refs/tags/{tag}.tar.gz".format(
-        repo = rctx.attr.repo,
-        tag = tag,
-    )
+        strip = default_strip
 
     rctx.download_and_extract(
         url = url,
@@ -189,12 +209,18 @@ github_source_repository = repository_rule(
             doc = "GitHub repo as `owner/name`.",
         ),
         "version": attr.string(
-            mandatory = True,
-            doc = "Upstream version string.",
+            doc = "Release-tag version string. Mutually exclusive with " +
+                  "`commit`; exactly one is required.",
+        ),
+        "commit": attr.string(
+            doc = "Full commit SHA for an untagged ref. Fetches " +
+                  "`archive/<commit>.tar.gz`. Use for repos without " +
+                  "release tags. Mutually exclusive with `version`.",
         ),
         "tag_format": attr.string(
             default = "v{version}",
-            doc = "Release tag pattern. Same semantics as `github_binary_repository`.",
+            doc = "Release tag pattern (tag mode only). Same semantics as " +
+                  "`github_binary_repository`.",
         ),
         "sha256": attr.string(
             default = "",
@@ -203,9 +229,9 @@ github_source_repository = repository_rule(
         ),
         "strip_prefix_template": attr.string(
             default = "",
-            doc = "Override strip-prefix pattern. Default: " +
-                  "`<repo-basename>-{version}` (matches GitHub's " +
-                  "auto-tarball convention).",
+            doc = "Override strip-prefix pattern (`{version}` / `{commit}` " +
+                  "substituted). Default: `<repo-basename>-{version}` for " +
+                  "tag mode, `<repo-basename>-{commit}` for commit mode.",
         ),
         "allow_unverified": attr.bool(
             default = False,
